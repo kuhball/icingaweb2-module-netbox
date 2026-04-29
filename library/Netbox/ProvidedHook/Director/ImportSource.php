@@ -27,6 +27,9 @@ class ImportSource extends ImportSourceHook
 	const ManufacturerMode = 25;
 	const DeviceInterfaceMode = 26;
 
+	// Virtual Chassis
+	const VirtualChassisMode = 28;
+
 	// IPAM
 	const IPAddressMode = 30;
 	const IPRangeMode = 32;
@@ -164,13 +167,20 @@ class ImportSource extends ImportSourceHook
 		$output = array();
 		$content_name = (strpos($content_type, 'virtualmachine') !== false) ? 'virtual_machine' : 'device';
 		foreach ($things as $thing) {
+			if ($content_type == "dcim.virtual_chassis"){
+				$member_ids = array();
+				foreach ($thing->members as $member) {
+    			array_push($member_ids,$member->id);
+				}
+			}
 			// make an array here for a list of contacts
 			$thing->interfaces_down = array();
 			$thing->interfaces_up = array();
 			$thing->interfaces_down_dict = (object)[];
 			$thing->interfaces_up_dict = (object)[];
 			foreach ($interfaces as $interface) {
-				if ((isset($interface->{$content_name}->id) && $interface->{$content_name}->id == $thing->id) && (!isset($interface->custom_fields->icinga_monitored) || $interface->custom_fields->icinga_monitored === true)) {
+				# if clause from hell
+				if ((isset($interface->{$content_name}->id) && ($interface->{$content_name}->id == $thing->id || (isset($member_ids) && in_array($interface->{$content_name}->id,$member_ids)))) && (!isset($interface->custom_fields->icinga_monitored) || $interface->custom_fields->icinga_monitored === true)) {
 					$icinga_dict = isset($interface->custom_fields->icinga_dict) ? $interface->custom_fields->icinga_dict : (object)[];
 					// {netbox_fields: {index_key:label, example_key:custom_fields.example}}
 					if (isset($icinga_dict->netbox_fields)){
@@ -414,6 +424,9 @@ class ImportSource extends ImportSourceHook
 				self::DeviceTypeMode => $form->translate('Device Types'),
 				self::ManufacturerMode => $form->translate('Manufacturers'),
 				self::DeviceInterfaceMode => $form->translate('Device Interfaces'),
+
+				// Virtual Chassis
+				self::VirtualChassisMode => $form->translate('Virtual Chassis'),
 			
 				// IPAM
 				self::IPAddressMode => $form->translate('IP Addresses'),
@@ -553,6 +566,17 @@ class ImportSource extends ImportSourceHook
 				}
 				$interfaces = array_merge($interfaces, $netboxLinked->deviceInterfaces($device_filter, 0));
 			}
+			if ($content_type == "dcim.virtual_chassis"){
+				$virtual_chassis_filter = "";
+				foreach ($things as $virtual_chassis) {
+					$virtual_chassis_filter .= "&virtual_chassis_id=" . $virtual_chassis->id;
+					if (strlen($virtual_chassis_filter) > 1500) {
+						$interfaces = array_merge($interfaces, $netboxLinked->deviceInterfaces($virtual_chassis_filter, 0));
+						$virtual_chassis_filter = "";
+					}
+				}
+				$interfaces = array_merge($interfaces, $netboxLinked->deviceInterfaces($virtual_chassis_filter, 0));
+			}
 		}
 		$ranges = $netboxLinked->ipRanges("", 0);
 		return $this->devices_with_services($services, $this->get_contact_assignments($contact_assignments, $this->get_ip_range($ranges, $this->get_interfaces($interfaces ,$things, $content_type))));
@@ -607,6 +631,8 @@ class ImportSource extends ImportSourceHook
 				return $netbox->manufacturers($filter, $limit);
 			case self::DeviceInterfaceMode:
 				return $netbox->deviceInterfaces($filter, $limit);
+			case self::VirtualChassisMode:
+				return $this->getLinkedObjects($baseurl, $apitoken, $proxy, $sslenable, $linkservices, $linkcontacts, $linkinterfaces, "dcim.virtual_chassis", $netbox->virtualChassis($filter, $limit));
 
 			// IPAM
 			case self::IPAddressMode:
